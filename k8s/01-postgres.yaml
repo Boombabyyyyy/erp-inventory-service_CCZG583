@@ -1,0 +1,67 @@
+# Dedicated database for inventory-service (database-per-service pattern)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: inventory-service-db-secret
+  namespace: erp
+type: Opaque
+stringData:
+  POSTGRES_DB: inventorydb
+  POSTGRES_USER: inventory
+  POSTGRES_PASSWORD: inventory-pass
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: inventory-service-db-pvc
+  namespace: erp
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 256Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-service-db
+  namespace: erp
+  labels: { app: inventory-service-db, tier: database }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: inventory-service-db }
+  template:
+    metadata:
+      labels: { app: inventory-service-db, tier: database }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports: [{ containerPort: 5432 }]
+          envFrom:
+            - secretRef: { name: inventory-service-db-secret }
+          env:
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          readinessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U inventory -d inventorydb"] }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: inventory-service-db-pvc }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-service-db
+  namespace: erp
+spec:
+  selector: { app: inventory-service-db }
+  ports: [{ port: 5432, targetPort: 5432 }]
